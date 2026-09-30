@@ -14,6 +14,7 @@ import {
   ChevronsRight,
   Droplets,
   Radio,
+  ShieldAlert,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGateways } from "@/hooks/useDrainageData";
@@ -28,6 +29,7 @@ const NAV = [
   { to: "/predictions", label: "AI Predictions", icon: BrainCircuit },
   { to: "/network", label: "Network", icon: Network },
   { to: "/maintenance", label: "Maintenance", icon: Wrench },
+  { to: "/tracking", label: "Incident Tracking", icon: ShieldAlert },
   { to: "/settings", label: "System Settings", icon: Settings },
 ];
 
@@ -54,7 +56,7 @@ export function Sidebar({
         </div>
         {!collapsed && (
           <div className="min-w-0 leading-tight">
-            <p className="truncate text-sm font-semibold text-[var(--color-text-0)]">Sentinel</p>
+            <p className="truncate text-sm font-semibold text-[var(--color-text-0)]">DrainWatch</p>
             <p className="truncate text-[10px] text-[var(--color-text-2)]">Drainage Intelligence</p>
           </div>
         )}

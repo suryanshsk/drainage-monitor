@@ -15,7 +15,7 @@ export default function LiveMonitoringPage() {
   const [rangeKey, setRangeKey] = useState("6h");
   const hours = RANGES.find((r) => r.key === rangeKey)?.hours ?? 6;
 
-  const node = useMemo(() => nodes.find((n) => n.id === selectedNodeId) ?? nodes[0], [nodes, selectedNodeId]);
+  const node = useMemo(() => nodes.find((n) => n.id === selectedNodeId) ?? nodes.find((n) => n.id !== "0") ?? nodes[0], [nodes, selectedNodeId]);
   const { history } = useSensorHistory(node?.id, hours);
 
   if (!node) {
@@ -37,7 +37,7 @@ export default function LiveMonitoringPage() {
             onChange={(e) => setSelectedNodeId(e.target.value)}
             className="mono rounded-md border border-[var(--color-line)] bg-[var(--color-bg-2)] px-2.5 py-1.5 text-sm text-[var(--color-text-0)] focus:border-[var(--color-cyan)] focus:outline-none"
           >
-            {nodes.map((n) => (
+            {nodes.filter(n => n.id !== "0").map((n) => (
               <option key={n.id} value={n.id}>
                 Node {n.id}
               </option>

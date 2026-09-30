@@ -93,12 +93,12 @@ export default function NodeDetailPage() {
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <Card>
             <CardHeader><CardTitle>Water level</CardTitle></CardHeader>
-            <CardContent><SensorChart data={history} series={[{ key: "waterLevel", color: "#4dd6d1", label: "Water level", unit: "%" }]} /></CardContent>
+            <CardContent><SensorChart data={history} hours={hours} series={[{ key: "waterLevel", color: "#4dd6d1", label: "Water level", unit: "%" }]} /></CardContent>
           </Card>
           <Card>
             <CardHeader><CardTitle>Gas levels</CardTitle></CardHeader>
             <CardContent>
-              <SensorChart data={history} series={[
+              <SensorChart data={history} hours={hours} series={[
                 { key: "methaneLEL", color: "#f0b13d", label: "CH4", unit: "% LEL" },
                 { key: "h2sPpm", color: "#ff5a5f", label: "H2S", unit: "ppm" },
               ]} />
@@ -106,13 +106,14 @@ export default function NodeDetailPage() {
           </Card>
           <Card>
             <CardHeader><CardTitle>Temperature</CardTitle></CardHeader>
-            <CardContent><SensorChart data={history} series={[{ key: "temperature", color: "#4d9fff", label: "Temperature", unit: "°C" }]} /></CardContent>
+            <CardContent><SensorChart data={history} hours={hours} series={[{ key: "temperature", color: "#4d9fff", label: "Temperature", unit: "°C" }]} /></CardContent>
           </Card>
           <Card>
             <CardHeader><CardTitle>Air Quality (MQ135)</CardTitle></CardHeader>
-            <CardContent><SensorChart data={history} series={[{ key: "mq135", color: "#b870ff", label: "MQ135", unit: "ADC" }]} /></CardContent>
+            <CardContent><SensorChart data={history} hours={hours} series={[{ key: "mq135", color: "#b870ff", label: "MQ135", unit: "ADC" }]} /></CardContent>
           </Card>
         </div>
+
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <Card className="lg:col-span-2">

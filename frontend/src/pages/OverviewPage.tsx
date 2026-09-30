@@ -38,13 +38,12 @@ export default function OverviewPage() {
         ) : error ? (
           <ErrorState title="Telemetry unavailable" detail={error} />
         ) : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
             <KpiCard icon={CircuitBoard} label="Total nodes" value={String(nodes.length)} accent="default" />
             <KpiCard icon={Wifi} label="Online nodes" value={String(stats.online)} accent="ok" />
             <KpiCard icon={BellRing} label="Active alerts" value={String(stats.activeAlerts)} accent="warn" />
             <KpiCard icon={AlertTriangle} label="Critical nodes" value={String(stats.critical)} accent="crit" />
             <KpiCard icon={Droplets} label="Avg water level" value={stats.avgWater.toFixed(0)} suffix="%" accent="cyan" />
-            <KpiCard icon={Activity} label="Network health" value={stats.meshHealth.toFixed(1)} suffix="%" accent="ok" />
             <KpiCard icon={Radio} label="Gateway status" value={stats.gwOnline === 0 ? "OFFLINE" : stats.gwOnline === gateways.length ? "ONLINE" : "DEGRADED"} accent={stats.gwOnline === 0 ? "crit" : stats.gwOnline === gateways.length ? "ok" : "warn"} />
             <KpiCard icon={BrainCircuit} label="Predicted blockages" value={String(stats.highRiskPredictions)} accent="crit" />
           </div>

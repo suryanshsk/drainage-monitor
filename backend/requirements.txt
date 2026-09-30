@@ -1,8 +1,9 @@
 fastapi
-uvicorn
+uvicorn[standard]
 pydantic
 psycopg2-binary
 python-dotenv
 asyncpg
 python-multipart
 websockets
+

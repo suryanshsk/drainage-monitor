@@ -33,7 +33,7 @@ export default function NetworkPage() {
   }, [topology]);
 
   return (
-    <AppShell title="Network" subtitle="ESP-NOW mesh topology and gateway health">
+    <AppShell title="Network" subtitle="ESP-LoRa mesh topology and gateway health">
       <div className="space-y-5">
         {stats && (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">

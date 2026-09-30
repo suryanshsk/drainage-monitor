@@ -1,9 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Bell, RadioTower, RefreshCw } from "lucide-react";
 import { formatClock, formatDate } from "@/utils/format";
 import { useAlerts, useGateways } from "@/hooks/useDrainageData";
 
-export function Header({ title, subtitle }: { title: string; subtitle?: string }) {
+export function Header({
+  title,
+  subtitle,
+  headerActions,
+}: {
+  title: string;
+  subtitle?: string;
+  headerActions?: ReactNode;
+}) {
   const [now, setNow] = useState(new Date());
   const gateways = useGateways();
   const { alerts } = useAlerts();
@@ -23,6 +31,7 @@ export function Header({ title, subtitle }: { title: string; subtitle?: string }
       </div>
 
       <div className="flex items-center gap-4">
+        {headerActions}
         <div className="hidden items-center gap-1.5 text-xs text-[var(--color-text-2)] md:flex">
           <RefreshCw className="h-3 w-3 animate-spin text-[var(--color-cyan)]" style={{ animationDuration: "3s" }} />
           <span className="mono">{formatClock(now)}</span>

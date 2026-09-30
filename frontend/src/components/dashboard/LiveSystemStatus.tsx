@@ -12,7 +12,7 @@ export function LiveSystemStatus() {
 
   const rows = [
     { label: "System status", value: error ? "Telemetry unavailable" : onlineNodes === 0 ? "Offline" : onlineNodes < nodes.length ? "Degraded" : "Operational", ok: !error },
-    { label: "Network", value: error ? "Awaiting backend connection" : "ESP-NOW Mesh Connected", ok: !error },
+    { label: "Network", value: error ? "Awaiting backend connection" : "ESP-LoRa Mesh Connected", ok: !error },
     { label: "Gateway", value: primaryGateway ? `${primaryGateway.id} ${primaryGateway.status}` : "Awaiting telemetry", ok: Boolean(primaryGateway) },
     { label: "Last sync", value: lastSync ? timeAgo(lastSync) : "—", ok: Boolean(lastSync) },
     { label: "Nodes", value: nodes.length ? `${onlineNodes} / ${nodes.length} Online` : "Awaiting telemetry", ok: nodes.length > 0 },

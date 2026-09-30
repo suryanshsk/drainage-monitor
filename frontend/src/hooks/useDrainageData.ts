@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { hardwareAdapter } from "@/services/hardware";
 import { mlAdapter } from "@/services/ml";
+import { trackingAdapter } from "@/services/tracking";
 import type {
   DrainNode,
   Alert,
@@ -10,6 +11,14 @@ import type {
   SystemEvent,
   Prediction,
   SensorReading,
+  Incident,
+  TrackingOverview,
+  TrackingMapMarker,
+  TrackingStatistics,
+  Authority,
+  ResponseTeam,
+  NotificationEvent,
+  EscalationRule,
 } from "@/types";
 
 /** All live nodes, kept fresh via the hardware adapter's simulated stream. */
@@ -186,4 +195,94 @@ export function usePredictions() {
     }).catch(() => setLoading(false));
   }, []);
   return { predictions, loading };
+}
+
+export function useTrackingOverview() {
+  const [overview, setOverview] = useState<TrackingOverview | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    trackingAdapter.getOverview().then((next) => {
+      setOverview(next);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, []);
+  return { overview, loading };
+}
+
+export function useIncidents() {
+  const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    trackingAdapter.getIncidents().then((next) => {
+      setIncidents(next);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, []);
+  return { incidents, loading };
+}
+
+export function useIncidentDetail(incidentId: string | undefined) {
+  const [incident, setIncident] = useState<Incident | null>(null);
+  const [loading, setLoading] = useState(Boolean(incidentId));
+  useEffect(() => {
+    if (!incidentId) {
+      setIncident(null);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    trackingAdapter.getIncident(incidentId).then((next) => {
+      setIncident(next);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, [incidentId]);
+  return { incident, loading };
+}
+
+export function useTrackingMap() {
+  const [markers, setMarkers] = useState<TrackingMapMarker[]>([]);
+  useEffect(() => {
+    trackingAdapter.getTrackingMap().then(setMarkers).catch(() => setMarkers([]));
+  }, []);
+  return markers;
+}
+
+export function useTrackingStatistics() {
+  const [stats, setStats] = useState<TrackingStatistics | null>(null);
+  useEffect(() => {
+    trackingAdapter.getStatistics().then(setStats).catch(() => setStats(null));
+  }, []);
+  return stats;
+}
+
+export function useAuthorities() {
+  const [authorities, setAuthorities] = useState<Authority[]>([]);
+  useEffect(() => {
+    trackingAdapter.getAuthorities().then(setAuthorities).catch(() => setAuthorities([]));
+  }, []);
+  return authorities;
+}
+
+export function useResponseTeams() {
+  const [teams, setTeams] = useState<ResponseTeam[]>([]);
+  useEffect(() => {
+    trackingAdapter.getResponseTeams().then(setTeams).catch(() => setTeams([]));
+  }, []);
+  return teams;
+}
+
+export function useNotifications() {
+  const [data, setData] = useState<NotificationEvent[]>([]);
+  useEffect(() => {
+    trackingAdapter.getNotifications().then(setData).catch(() => setData([]));
+  }, []);
+  return data;
+}
+
+export function useEscalationRules() {
+  const [rules, setRules] = useState<EscalationRule[]>([]);
+  useEffect(() => {
+    trackingAdapter.getEscalationRules().then(setRules).catch(() => setRules([]));
+  }, []);
+  return rules;
 }

@@ -5,12 +5,12 @@
   --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
   --color-bg-0: #000000;
-  --color-bg-1: #0D1117;
-  --color-bg-2: #11161D;
-  --color-bg-3: #161B22;
-  --color-bg-sidebar: #0D1117;
-  --color-line: #21262D;
-  --color-line-soft: #21262D;
+  --color-bg-1: #0A0A0A;
+  --color-bg-2: #141414;
+  --color-bg-3: #1F1F1F;
+  --color-bg-sidebar: #0A0A0A;
+  --color-line: #2A2A2A;
+  --color-line-soft: #2A2A2A;
 
   --color-text-0: #FFFFFF;
   --color-text-1: #8B949E;

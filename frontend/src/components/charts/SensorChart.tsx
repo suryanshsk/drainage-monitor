@@ -8,14 +8,47 @@ interface SeriesConfig {
   unit?: string;
 }
 
+/** Pick X-axis tick format based on how many hours of data are shown. */
+function xTickFormatter(hours: number) {
+  return (v: any) => {
+    const d = new Date(v);
+    if (hours <= 24) {
+      // e.g.  "14:35"
+      return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
+    }
+    if (hours <= 7 * 24) {
+      // e.g.  "Sep 29 14:00"
+      return d.toLocaleDateString("en-IN", { month: "short", day: "numeric" }) +
+             " " + d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
+    }
+    // e.g.  "Sep 29"
+    return d.toLocaleDateString("en-IN", { month: "short", day: "numeric" });
+  };
+}
+
+function tooltipLabelFormatter(hours: number) {
+  return (v: any) => {
+    const d = new Date(String(v));
+    if (hours <= 24) {
+      return d.toLocaleString("en-IN");
+    }
+    return d.toLocaleDateString("en-IN", {
+      weekday: "short", year: "numeric", month: "short", day: "numeric",
+      hour: "2-digit", minute: "2-digit", hour12: false,
+    });
+  };
+}
+
 export function SensorChart({
   data,
   series,
   height = 220,
+  hours = 24,
 }: {
   data: SensorReading[];
   series: SeriesConfig[];
   height?: number;
+  hours?: number;
 }) {
   return (
     <ResponsiveContainer width="100%" height={height}>
@@ -23,10 +56,10 @@ export function SensorChart({
         <CartesianGrid stroke="#1a2023" vertical={false} />
         <XAxis
           dataKey="timestamp"
-          tickFormatter={(v: string) => new Date(v).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false })}
+          tickFormatter={xTickFormatter(hours)}
           stroke="#6f7d81"
           tick={{ fontSize: 10, fontFamily: "IBM Plex Mono" }}
-          minTickGap={40}
+          minTickGap={hours <= 24 ? 40 : hours <= 168 ? 60 : 80}
         />
         <YAxis stroke="#6f7d81" tick={{ fontSize: 10, fontFamily: "IBM Plex Mono" }} width={36} />
         <Tooltip
@@ -36,7 +69,7 @@ export function SensorChart({
             borderRadius: 8,
             fontSize: 12,
           }}
-          labelFormatter={(v) => new Date(String(v)).toLocaleString("en-IN")}
+          labelFormatter={tooltipLabelFormatter(hours)}
           labelStyle={{ color: "#aab6b9", marginBottom: 4 }}
         />
         {series.map((s) => (
@@ -55,3 +88,4 @@ export function SensorChart({
     </ResponsiveContainer>
   );
 }
+

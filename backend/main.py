@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Form, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, Form, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
@@ -9,10 +9,12 @@ import json
 import random
 
 import db  # ← dual-write PostgreSQL layer
+import tracking
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Simulator disabled so physical nodes dictate online/offline status
+    db.ensure_tracking_schema()
+    tracking.ensure_default_tracking_records()
     yield
 
 app = FastAPI(lifespan=lifespan)
@@ -48,6 +50,7 @@ def parse_lora_string(raw: str) -> dict:
 @app.post("/lora-data")
 async def receive_lora_data(
     request: Request,
+    background_tasks: BackgroundTasks,
     data: str   = Form(default=""),
     rssi: int   = Form(default=0),
     snr:  float = Form(default=0.0),
@@ -73,7 +76,7 @@ async def receive_lora_data(
         return JSONResponse({"status": "error", "message": str(e)}, status_code=400)
 
     ts = datetime.now(timezone.utc).isoformat()
-    await db.insert_reading(node_id, ts, temp, hum, mq135, h2s, ch4, rssi, snr, packet, wlvl, wflow, bat)
+    background_tasks.add_task(db.insert_reading, node_id, ts, temp, hum, mq135, h2s, ch4, rssi, snr, packet, wlvl, wflow, bat)
 
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Node {node_id} | "
           f"T={temp} H={hum} MQ135={mq135} H2S={h2s} CH4={ch4} WLVL={wlvl} FLOW={wflow} BAT={bat}")
@@ -82,7 +85,7 @@ async def receive_lora_data(
 
 # Also accept JSON POST (for any future use / manual testing)
 @app.post("/api/data")
-async def receive_json_data(request: Request):
+async def receive_json_data(request: Request, background_tasks: BackgroundTasks):
     try:
         body = await request.body()
         raw = body.decode("utf-8").strip()
@@ -116,7 +119,7 @@ async def receive_json_data(request: Request):
             bat     = float(parsed.get("BAT", 0.0)) if "BAT" in parsed else None
 
         ts = datetime.now(timezone.utc).isoformat()
-        await db.insert_reading(node_id, ts, temp, hum, mq135, h2s, ch4, rssi, snr, packet, wlvl, wflow, bat)
+        background_tasks.add_task(db.insert_reading, node_id, ts, temp, hum, mq135, h2s, ch4, rssi, snr, packet, wlvl, wflow, bat)
         return {"status": "success", "node": node_id}
     except Exception as e:
         return JSONResponse({"status": "error", "message": str(e)}, status_code=400)
@@ -154,25 +157,58 @@ async def simulate_node1():
 # ──────────────────────────────────────────────
 # NORMALIZATION HELPERS
 # ──────────────────────────────────────────────
-# Hackathon setup: sensors are in a room with clean air.
-# We assume a baseline ADC value of ~400 for fresh air.
+# Baselines are the ADC readings observed in CLEAN AIR (room environment).
+# Subtract baseline so clean air → 0 output.
+# MQ sensors need 24-48 hr warm-up; re-run init_pg.py --calibrate after
+# sensors stabilise to update these values automatically.
+#
+# How to re-calibrate: note the steady ADC values after 48 hr warm-up,
+# then update the three BASELINE constants below.
+#
+#   Sensor       Clean-air ADC observed    Real-world clean-air value
+#   MQ-135       ~2632                     CO2 ~400 ppm, NH3 ~0 ppm
+#   H2S (MQ-136) ~ 932                     0 ppm H2S
+#   CH4 (MQ-4)   ~1936                     ~0% LEL (atmospheric CH4 is 0.02%)
+
+MQ135_BASELINE = 2000   # ADC in clean air  →  output = 400 AQI (baseline AQI)
+H2S_BASELINE   = 600    # ADC in clean air  →  output = ~0.5 - 0.8 ppm
+H2S_MIN_NOISE  = 350    # Noise floor ADC
+CH4_BASELINE   = 2400   # ADC in clean air  →  output = ~1.0 - 1.5 % LEL
+CH4_MIN_NOISE  = 1500   # Noise floor ADC
+
+# Realistic noise floors — sensors always show a tiny non-zero value in clean air.
+# CH4 : ~0.3% LEL  (atmospheric methane is ~1.7 ppm = 0.003% LEL but sensor noise adds more)
+# H2S : ~0.2 ppm   (trace sulfur compounds always present in ambient air)
+NOISE_FLOOR_CH4 = 0.3   # % LEL
+NOISE_FLOOR_H2S = 0.2   # ppm
+
 def norm_ch4(raw: int) -> float:
-    # Baseline ~400. Map to % LEL.
-    baseline = 400
-    if raw <= baseline: return 0.0
-    return round(min(100.0, (raw - baseline) / (4095 - baseline) * 100), 1)
+    """Map raw ADC to % LEL. Ambient noise (1200-1800) maps safely to 0.0-1.5% LEL (inside 0-3% normal range). Real gas scales to 100%."""
+    if raw < CH4_MIN_NOISE:
+        return 0.0
+    if raw <= CH4_BASELINE:
+        return round((raw - CH4_MIN_NOISE) / float(CH4_BASELINE - CH4_MIN_NOISE) * 1.5, 1)
+    
+    # Above baseline, scale 1.5% to 100%
+    return round(min(100.0, 1.5 + (raw - CH4_BASELINE) / float(4095 - CH4_BASELINE) * 98.5), 1)
 
 def norm_h2s(raw: int) -> float:
-    # Baseline ~400. Map to ppm. Toxic above 10 ppm, max e.g. 50 ppm.
-    baseline = 400
-    if raw <= baseline: return 0.0
-    return round(min(50.0, (raw - baseline) / (4095 - baseline) * 50), 1)
+    """Map raw ADC to ppm H2S. Ambient noise (350-600) maps safely to 0.0-0.8 ppm (inside 0-6 ppm normal range). Real gas scales to 50 ppm."""
+    if raw < H2S_MIN_NOISE:
+        return 0.0
+    if raw <= H2S_BASELINE:
+        return round((raw - H2S_MIN_NOISE) / float(H2S_BASELINE - H2S_MIN_NOISE) * 0.8, 1)
+    
+    return round(min(50.0, 0.8 + (raw - H2S_BASELINE) / float(4095 - H2S_BASELINE) * 49.2), 1)
 
 def norm_mq135(raw: int) -> int:
-    # Baseline ~400.
-    baseline = 400
-    if raw <= baseline: return 400
-    return 400 + (raw - baseline)
+    """Map raw ADC to AQI. Ambient air (~2000-2200) maps around 400-500. Elevated pollutants scale smoothly to 2000+."""
+    if raw <= MQ135_BASELINE:
+        return max(350, int(400 - (MQ135_BASELINE - raw) * 0.05))
+    scaled = int((raw - MQ135_BASELINE) / float(4095 - MQ135_BASELINE) * 1600)
+    return min(4095, 400 + scaled)
+
+
 
 def get_sector_name(nid: int) -> str:
     if nid == 0:
@@ -264,28 +300,52 @@ def node_to_drain_node(r: dict) -> dict:
     }
 
 
+def _master_is_online() -> bool:
+    """
+    Master (node 0) never inserts its own row — it only forwards slave packets.
+    But if ANY slave reported data in the last 5 minutes, master MUST be online
+    (slaves cannot reach the backend without master's WiFi uplink).
+    """
+    row = db.query_one(
+        "SELECT 1 FROM readings WHERE node_id != 0 AND timestamp >= NOW() - INTERVAL '5 minutes' LIMIT 1"
+    )
+    return row is not None
+
+
 @app.get("/api/nodes")
 def get_nodes():
     # Fetch latest readings for nodes that have data
     latest = {r["node_id"]: r for r in latest_per_node()}
-    
+
+    # Master (node 0) is online if any slave reported in the last 5 minutes.
+    # It never inserts its own row — it's a WiFi gateway, not a sensor node.
+    master_online = _master_is_online()
+
+    locations = {
+        0: {"lat": 28.476502, "lng": 77.504466, "label": "Block A, Beta I, Greater Noida – Master Node"},
+        1: {"lat": 28.477414, "lng": 77.503938, "label": "Block A, Beta I, Greater Noida"},
+        2: {"lat": 28.478387, "lng": 77.504407, "label": "Block B, Beta I, Greater Noida"},
+    }
+
     nodes = []
     for nid in [0, 1, 2]:
-        if nid in latest:
-            nodes.append(node_to_drain_node(latest[nid]))
-        else:
-            # Create a default "offline" node entry for nodes with no data yet
-            sector_name = get_sector_name(nid)
-            locations = {
-                0: {"lat": 28.476502, "lng": 77.504466, "label": "Block A, Beta I, Greater Noida – Master Node"},
-                1: {"lat": 28.477414, "lng": 77.503938, "label": "Block A, Beta I, Greater Noida"},
-                2: {"lat": 28.478387, "lng": 77.504407, "label": "Block B, Beta I, Greater Noida"},
-            }
+
+        # ── Node 0: master gateway ────────────────────────────────────
+        if nid == 0:
+            # Always show master — infer status from slave activity
+            last_slave = db.query_one(
+                "SELECT timestamp FROM readings WHERE node_id != 0 ORDER BY id DESC LIMIT 1"
+            )
+            ts_str = (
+                last_slave["timestamp"].isoformat()
+                if last_slave and hasattr(last_slave["timestamp"], "isoformat")
+                else datetime.now(timezone.utc).isoformat()
+            )
             nodes.append({
-                "id": str(nid),
-                "sector": sector_name,
-                "status": "offline",
-                "location": locations[nid],
+                "id": "0",
+                "sector": get_sector_name(0),
+                "status": "online" if master_online else "offline",
+                "location": locations[0],
                 "waterLevel": 0,
                 "methaneLEL": 0.0,
                 "h2sPpm": 0.0,
@@ -294,18 +354,43 @@ def get_nodes():
                 "mq135": 400,
                 "waterFlow": 0.0,
                 "rssi": 0,
-                "hopCount": 1 if nid != 0 else 0,
-                "parentNodeId": "0" if nid != 0 else None,
+                "hopCount": 0,
+                "parentNodeId": None,
                 "gatewayId": "gw-master",
-                "packetLoss": 100,
-                "lastSeen": datetime.now(timezone.utc).isoformat(),
-                "battery": 0.0,
+                "packetLoss": 0,
+                "lastSeen": ts_str,
+                "battery": 100.0,
                 "risk": "low",
                 "tampered": False,
                 "installedAt": "2026-01-01T00:00:00Z",
                 "calibrationDueAt": "2026-12-01T00:00:00Z",
             })
+            continue
+
+        # ── Slave nodes (1, 2, …) ─────────────────────────────────────
+        if nid in latest:
+            nodes.append(node_to_drain_node(latest[nid]))
+        else:
+            # Node has no recent data (or no data ever) → show as offline
+            nodes.append({
+                "id": str(nid),
+                "sector": get_sector_name(nid),
+                "status": "offline",
+                "location": locations.get(nid, locations[1]),
+                "waterLevel": 0, "methaneLEL": 0.0, "h2sPpm": 0.0,
+                "temperature": 0.0, "humidity": 0.0, "mq135": 400,
+                "waterFlow": 0.0, "rssi": 0,
+                "hopCount": 1, "parentNodeId": "0",
+                "gatewayId": "gw-master", "packetLoss": 100,
+                "lastSeen": datetime.now(timezone.utc).isoformat(),
+                "battery": 0.0, "risk": "low",
+                "tampered": False,
+                "installedAt": "2026-01-01T00:00:00Z",
+                "calibrationDueAt": "2026-12-01T00:00:00Z",
+            })
+
     return nodes
+
 
 
 @app.get("/api/nodes/{node_id}")
@@ -392,7 +477,7 @@ def get_alerts():
 
         # ── Gas alerts ────────────────────────────────────────────
         if ch4_lel > 10:
-            alerts.append({
+            alert = {
                 "id": f"ch4-{node_id}",
                 "nodeId": node_id,
                 "category": "gas",
@@ -402,9 +487,11 @@ def get_alerts():
                 "sector": sector,
                 "value": ch4_lel, "unit": "% LEL", "threshold": 10,
                 "timestamp": ts_str, "status": "active",
-            })
+            }
+            alerts.append(alert)
+            tracking.maybe_create_incident_from_alert(alert)
         if h2s_ppm > 5:
-            alerts.append({
+            alert = {
                 "id": f"h2s-{node_id}",
                 "nodeId": node_id,
                 "category": "gas",
@@ -414,11 +501,13 @@ def get_alerts():
                 "sector": sector,
                 "value": h2s_ppm, "unit": "ppm", "threshold": 5,
                 "timestamp": ts_str, "status": "active",
-            })
+            }
+            alerts.append(alert)
+            tracking.maybe_create_incident_from_alert(alert)
 
         # ── Water / flood alerts ──────────────────────────────────
         if water_lvl >= 100:
-            alerts.append({
+            alert = {
                 "id": f"flood-{node_id}",
                 "nodeId": node_id,
                 "category": "flood",
@@ -428,9 +517,11 @@ def get_alerts():
                 "sector": sector,
                 "value": water_lvl, "unit": "%", "threshold": 100,
                 "timestamp": ts_str, "status": "active",
-            })
+            }
+            alerts.append(alert)
+            tracking.maybe_create_incident_from_alert(alert)
         elif water_lvl > 75:
-            alerts.append({
+            alert = {
                 "id": f"water-{node_id}",
                 "nodeId": node_id,
                 "category": "flood",
@@ -440,8 +531,218 @@ def get_alerts():
                 "sector": sector,
                 "value": water_lvl, "unit": "%", "threshold": 75,
                 "timestamp": ts_str, "status": "active",
-            })
+            }
+            alerts.append(alert)
+            tracking.maybe_create_incident_from_alert(alert)
     return alerts
+
+
+@app.get("/api/incidents")
+def list_incidents_api():
+    return tracking.list_incidents()
+
+
+@app.get("/api/incidents/{incident_id}")
+def get_incident_api(incident_id: str):
+    try:
+        incident = tracking.get_incident_detail(int(incident_id))
+    except ValueError:
+        return JSONResponse({"detail": "Invalid incident id"}, status_code=400)
+    if not incident:
+        return JSONResponse({"detail": "Incident not found"}, status_code=404)
+    return incident
+
+
+@app.post("/api/incidents")
+async def create_incident_api(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"detail": "Request body must be JSON"}, status_code=400)
+    alert = payload.get("alert") if isinstance(payload, dict) else None
+    if not alert:
+        return JSONResponse({"detail": "alert payload required"}, status_code=400)
+    incident = tracking.maybe_create_incident_from_alert(alert)
+    if not incident:
+        return JSONResponse({"detail": "Unable to create incident"}, status_code=500)
+    return incident
+
+
+@app.patch("/api/incidents/{incident_id}")
+async def patch_incident_api(incident_id: str, request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"detail": "Request body must be JSON"}, status_code=400)
+    try:
+        updated = tracking.transition_incident_status(
+            int(incident_id),
+            str(payload.get("status", "DETECTED")),
+            payload.get("message") or "Status updated by operator",
+            actor_role=payload.get("actorRole") or "SYSTEM",
+            metadata=payload.get("metadata") or {},
+        )
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+    return updated
+
+
+@app.post("/api/incidents/{incident_id}/acknowledge")
+def acknowledge_incident_api(incident_id: str):
+    try:
+        return tracking.transition_incident_status(int(incident_id), "ACKNOWLEDGED", "Worker acknowledged incident.", actor_role="FIELD_WORKER")
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
+
+@app.post("/api/incidents/{incident_id}/assign")
+async def assign_incident_api(incident_id: str, request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"detail": "Request body must be JSON"}, status_code=400)
+    return tracking.assign_incident(
+        int(incident_id),
+        authority_id=int(payload.get("authorityId") or 1),
+        team_id=payload.get("teamId"),
+        user_id=payload.get("userId"),
+        assigned_by=payload.get("assignedBy"),
+        reason=payload.get("reason") or "Assigned by operator",
+    )
+
+
+@app.post("/api/incidents/{incident_id}/start")
+def start_incident_api(incident_id: str):
+    try:
+        return tracking.transition_incident_status(int(incident_id), "IN_PROGRESS", "Field response started.", actor_role="FIELD_WORKER")
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
+
+@app.post("/api/incidents/{incident_id}/on-site")
+def on_site_incident_api(incident_id: str):
+    try:
+        return tracking.transition_incident_status(int(incident_id), "FIELD_VERIFICATION", "Worker verified field conditions on site.", actor_role="FIELD_WORKER")
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
+
+@app.post("/api/incidents/{incident_id}/resolve")
+def resolve_incident_api(incident_id: str):
+    try:
+        return tracking.transition_incident_status(int(incident_id), "RESOLVED", "Response action completed and issue resolved.", actor_role="SUPERVISOR")
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
+
+@app.post("/api/incidents/{incident_id}/verify")
+def verify_incident_api(incident_id: str):
+    try:
+        return tracking.transition_incident_status(int(incident_id), "VERIFIED", "Resolution was verified by supervisor.", actor_role="SUPERVISOR")
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
+
+@app.post("/api/incidents/{incident_id}/close")
+def close_incident_api(incident_id: str):
+    try:
+        return tracking.transition_incident_status(int(incident_id), "CLOSED", "Incident closed after verification.", actor_role="SUPERVISOR")
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
+
+@app.post("/api/incidents/{incident_id}/escalate")
+async def escalate_incident_api(incident_id: str, request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"detail": "Request body must be JSON"}, status_code=400)
+    try:
+        return tracking.transition_incident_status(
+            int(incident_id),
+            "ESCALATED",
+            payload.get("message") or "Escalated to higher authority.",
+            actor_role=payload.get("actorRole") or "MUNICIPAL_OPERATOR",
+            metadata={"toRole": payload.get("toRole")},
+        )
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
+
+@app.get("/api/incidents/{incident_id}/timeline")
+def get_incident_timeline_api(incident_id: str):
+    try:
+        incident = tracking.get_incident_detail(int(incident_id))
+    except ValueError:
+        return JSONResponse({"detail": "Invalid incident id"}, status_code=400)
+    if not incident:
+        return JSONResponse({"detail": "Incident not found"}, status_code=404)
+    return incident.get("events", [])
+
+
+@app.get("/api/incidents/{incident_id}/evidence")
+def get_incident_evidence_api(incident_id: str):
+    try:
+        incident = tracking.get_incident_detail(int(incident_id))
+    except ValueError:
+        return JSONResponse({"detail": "Invalid incident id"}, status_code=400)
+    if not incident:
+        return JSONResponse({"detail": "Incident not found"}, status_code=404)
+    return incident.get("evidence", [])
+
+
+@app.post("/api/incidents/{incident_id}/evidence")
+async def create_incident_evidence_api(incident_id: str, request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"detail": "Request body must be JSON"}, status_code=400)
+    try:
+        evidence_record = tracking.create_evidence_record(
+            int(incident_id),
+            payload.get("type") or "NOTE",
+            payload.get("url") or "/mock/evidence",
+            payload.get("description") or "Field evidence captured",
+            payload.get("uploadedBy") or "operator",
+        )
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+    return evidence_record
+
+
+@app.get("/api/authorities")
+def list_authorities_api():
+    return tracking.get_authorities()
+
+
+@app.get("/api/response-teams")
+def list_response_teams_api():
+    return tracking.get_response_teams()
+
+
+@app.get("/api/notifications")
+def list_notifications_api():
+    return tracking.get_notifications()
+
+
+@app.get("/api/escalation-rules")
+def list_escalation_rules_api():
+    return tracking.get_escalation_rules()
+
+
+@app.get("/api/tracking/overview")
+def tracking_overview_api():
+    return tracking.get_tracking_overview()
+
+
+@app.get("/api/tracking/map")
+def tracking_map_api():
+    return tracking.get_tracking_map()
+
+
+@app.get("/api/tracking/statistics")
+def tracking_statistics_api():
+    return tracking.get_tracking_statistics()
 
 
 @app.post("/api/alerts/{alert_id}/acknowledge")
@@ -496,9 +797,20 @@ def get_gateways():
 
 @app.get("/api/network/topology")
 def get_topology():
-    nodes = [node_to_drain_node(r) for r in latest_per_node()]
-    edges = [{"from": "gw-master", "to": n["id"], "rssi": n["rssi"], "hop": 1, "packetStatus": "good"} for n in nodes]
+    # Use get_nodes() so Network page and Overview are always consistent
+    nodes = get_nodes()
+    edges = [
+        {
+            "from": "gw-master",
+            "to": n["id"],
+            "rssi": n["rssi"],
+            "hop": n["hopCount"],
+            "packetStatus": "good" if n["status"] != "offline" else "lost"
+        }
+        for n in nodes
+    ]
     return {"gateways": get_gateways(), "nodes": nodes, "edges": edges}
+
 
 
 @app.get("/api/maintenance")
@@ -513,11 +825,13 @@ def get_events():
     for r in rows:
         ts = r.get("timestamp")
         ts_str = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+        ch4_norm = norm_ch4(r.get('ch4') or 0)
+        h2s_norm = norm_h2s(r.get('h2s') or 0)
         events.append({
             "id": str(r["id"]),
             "nodeId": str(r["node_id"]),
             "timestamp": ts_str,
-            "message": f"Node {r['node_id']}: T={r.get('temp')}°C H={r.get('hum')}% CH4={r.get('ch4')} H2S={r.get('h2s')}",
+            "message": f"Node {r['node_id']}: T={r.get('temp')}°C H={r.get('hum')}% CH4={ch4_norm}% LEL H2S={h2s_norm} ppm",
             "kind": "info",
         })
     return events
@@ -564,7 +878,7 @@ def get_db_status():
     return db.db_status()
 
 
-# WebSocket telemetry — streams live node data every 5 seconds
+# WebSocket telemetry — streams live node data every 1 second
 @app.websocket("/ws/telemetry")
 async def telemetry_ws(websocket: WebSocket):
     await websocket.accept()
@@ -572,7 +886,7 @@ async def telemetry_ws(websocket: WebSocket):
         while True:
             nodes = get_nodes()
             await websocket.send_text(json.dumps(nodes))
-            await asyncio.sleep(5)
+            await asyncio.sleep(1)
     except WebSocketDisconnect:
         pass
 

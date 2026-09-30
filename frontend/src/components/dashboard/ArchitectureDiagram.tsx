@@ -1,7 +1,7 @@
 export function ArchitectureDiagram() {
   const stages = [
     { title: "Underground Sensor Nodes", detail: "H2S · CH4 · Air Quality · Level · Flow · Temp · Humidity", tag: "ESP32" },
-    { title: "ESP-NOW Mesh", detail: "Node-to-node relay, no Wi-Fi infrastructure required", tag: "MESH" },
+    { title: "ESP-LoRa Mesh", detail: "Node-to-node relay, no Wi-Fi infrastructure required", tag: "MESH" },
     { title: "Gateway", detail: "Above-ground aggregation · ESP32 + 4G backhaul", tag: "GW" },
     { title: "Backend API", detail: "REST / WebSocket bridge — not yet connected", tag: "FUTURE" },
     { title: "Monitoring Dashboard", detail: "This application", tag: "LIVE" },

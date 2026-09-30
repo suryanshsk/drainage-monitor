@@ -11,6 +11,8 @@ import PredictionsPage from "@/pages/PredictionsPage";
 import NetworkPage from "@/pages/NetworkPage";
 import MaintenancePage from "@/pages/MaintenancePage";
 import SettingsPage from "@/pages/SettingsPage";
+import TrackingPage from "@/pages/TrackingPage";
+import IncidentDetailPage from "@/pages/IncidentDetailPage";
 
 export default function App() {
   return (
@@ -27,6 +29,8 @@ export default function App() {
         <Route path="/predictions" element={<PredictionsPage />} />
         <Route path="/network" element={<NetworkPage />} />
         <Route path="/maintenance" element={<MaintenancePage />} />
+        <Route path="/tracking" element={<TrackingPage />} />
+        <Route path="/tracking/:incidentId" element={<IncidentDetailPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
